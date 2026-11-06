@@ -1,0 +1,5 @@
+# Dependências iniciais (Etapa 1 e Etapa 2 - Base, Configuração e Testes Unitários)
+# Compatíveis com Python 3.12, 3.13 e 3.14 (pacotes pure-Python)
+pytest>=8.3.0
+python-dotenv>=1.0.1
+

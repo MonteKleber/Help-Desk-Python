@@ -36,7 +36,15 @@ O Sistema de Chamados de TI permite realizar o gerenciamento básico de solicita
 
 1. Clone este repositório.
 2. Acesse a pasta do projeto.
-3. Execute:
+3. (Recomendado) Crie e ative um ambiente virtual:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+4. Execute:
 
 ```bash
 python main.py
@@ -44,4 +52,4 @@ python main.py
 
 ## Status do projeto
 
-Em desenvolvimento. Novas funcionalidades serão implementadas conforme a evolução do projeto.
+Em desenvolvimento (evoluindo para **AI Help Desk**). Novas funcionalidades serão implementadas conforme a evolução do projeto.
