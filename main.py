@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from chamados import Chamado
+from repositorio_sqlite import RepositorioSQLite
 from sistema_chamados import SistemaChamados
 
 
@@ -12,14 +15,15 @@ def exibir_chamados(chamados: list[Chamado]) -> None:
         print("----------------")
 
 
-def main() -> None:
-    sistema = SistemaChamados()  ##Instancia o objeto SistemaChamados responsável por gerenciar os chamados
-    chamado1 = Chamado(
-        1,
-        "O computador travou",
-        "O computador utilizado na produção travou",
-    )
-    sistema.cadastrar_chamado(chamado1)  # Cadastro o chamado
+def main(caminho_banco: str | Path = "helpdesk.db") -> None:
+    repositorio = RepositorioSQLite(caminho_banco)
+    sistema = SistemaChamados(repositorio=repositorio)  ##Instancia o objeto SistemaChamados com persistência SQLite
+
+    if sistema.buscar_chamado(1) is None:
+        sistema.criar_chamado(
+            "O computador travou",
+            "O computador utilizado na produção travou",
+        )  # Cadastra o chamado inicial caso o banco esteja vazio
 
     entrada_id = input("Digite o ID do chamado: ")  # solicita o usuário que digite o id do chamado para que ele realize as busca correta
     try:
@@ -36,14 +40,16 @@ def main() -> None:
         print(f"Título do chamado: {resultado.titulo}")
         print(f"Status: {resultado.status}")
 
-        iniciado = resultado.iniciar_atendimento()
+        iniciado = sistema.iniciar_atendimento(id_procurado)
 
         if iniciado:
             print("Atendimento iniciado com sucesso!")
         else:
             print("Não foi possível iniciar o atendimento.")
 
-        print(f"Novo status: {resultado.status}")
+        chamado_atualizado = sistema.buscar_chamado(id_procurado)
+        if chamado_atualizado is not None:
+            print(f"Novo status: {chamado_atualizado.status}")
 
     else:
         print("Chamado não encontrado.")

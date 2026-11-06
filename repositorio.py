@@ -1,3 +1,4 @@
+import copy
 from typing import Protocol, runtime_checkable
 
 from chamados import Chamado
@@ -25,7 +26,7 @@ class RepositorioChamados(Protocol):
 
 
 class RepositorioMemoria:
-    """Implementação em memória do contrato RepositorioChamados."""
+    """Implementação em memória do contrato RepositorioChamados com isolamento por cópia."""
 
     def __init__(self) -> None:
         self._chamados: list[Chamado] = []
@@ -41,17 +42,18 @@ class RepositorioMemoria:
             self._sequencia_id += 1
             chamado.atribuir_id(self._sequencia_id)
 
-        self._chamados.append(chamado)
-        return chamado
+        copia_interna = copy.copy(chamado)
+        self._chamados.append(copia_interna)
+        return copy.copy(copia_interna)
 
     def buscar_por_id(self, id_chamado: int) -> Chamado | None:
         for chamado in self._chamados:
             if chamado.id == id_chamado:
-                return chamado
+                return copy.copy(chamado)
         return None
 
     def listar_todos(self) -> list[Chamado]:
-        return list(self._chamados)
+        return [copy.copy(chamado) for chamado in self._chamados]
 
     def atualizar(self, chamado: Chamado) -> Chamado:
         if chamado.id is None:
@@ -59,8 +61,14 @@ class RepositorioMemoria:
 
         for indice, item in enumerate(self._chamados):
             if item.id == chamado.id:
-                self._chamados[indice] = chamado
-                return chamado
+                if item.status != chamado.status and not Chamado.transicao_permitida(
+                    item.status, chamado.status
+                ):
+                    raise ValueError(
+                        f"Transição de status inválida de {item.status} para {chamado.status}."
+                    )
+                copia_atualizada = copy.copy(chamado)
+                self._chamados[indice] = copia_atualizada
+                return copy.copy(copia_atualizada)
 
         raise ValueError(f"Chamado com ID {chamado.id} não encontrado para atualização.")
-

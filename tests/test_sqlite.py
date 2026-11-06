@@ -4,6 +4,7 @@ import sqlite3
 import pytest
 
 from chamados import Chamado, StatusChamado
+from main import main
 from repositorio import RepositorioChamados
 from repositorio_sqlite import RepositorioSQLite
 from sistema_chamados import SistemaChamados
@@ -55,6 +56,40 @@ def test_geracao_automatica_sequencial_de_ids(sistema_sqlite: SistemaChamados) -
     assert c1.id == 1
     assert c2.id == 2
     assert c3.id == 3
+
+
+def test_id_permanece_none_em_caso_de_falha_na_gravacao(
+    caminho_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repositorio = RepositorioSQLite(caminho_db)
+    chamado = Chamado(None, "Chamado não persistido", "Falha simulada na transação")
+
+    class ConexaoComFalhaNoCommit:
+        def __init__(self, conn_real: sqlite3.Connection) -> None:
+            self._conn = conn_real
+
+        def execute(self, *args: object, **kwargs: object) -> sqlite3.Cursor:
+            return self._conn.execute(*args, **kwargs)  # type: ignore[arg-type]
+
+        def __enter__(self) -> "ConexaoComFalhaNoCommit":
+            self._conn.__enter__()
+            return self
+
+        def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+            self._conn.rollback()
+            raise sqlite3.OperationalError("Falha simulada ao confirmar transação (COMMIT)")
+
+        def close(self) -> None:
+            self._conn.close()
+
+    conn_real = sqlite3.connect(caminho_db)
+    monkeypatch.setattr(repositorio, "_conectar", lambda: ConexaoComFalhaNoCommit(conn_real))
+
+    with pytest.raises(sqlite3.OperationalError, match="Falha simulada ao confirmar transação"):
+        repositorio.salvar(chamado)
+
+    # Garante que o objeto em memória não recebeu um ID de uma transação que falhou
+    assert chamado.id is None
 
 
 # =========================================================
@@ -118,6 +153,52 @@ def test_atualizar_status_iniciar_e_encerrar_no_sqlite(
             "SELECT status FROM chamados WHERE id = ?", (chamado.id,)
         ).fetchone()[0]
         assert status_banco_final == "ENCERRADO"
+
+
+def test_persistencia_de_mudancas_realizadas_pelo_servico(
+    sistema_sqlite: SistemaChamados, caminho_db: Path
+) -> None:
+    chamado = sistema_sqlite.criar_chamado("Switch travado", "Portas 1 a 8 sem link")
+    assert chamado.id == 1
+
+    # Modificar apenas o objeto recuperado em memória NÃO altera o banco sem passar pelo serviço
+    copia_local = sistema_sqlite.buscar_chamado(1)
+    assert copia_local is not None
+    copia_local.iniciar_atendimento()
+    no_banco_ainda_aberto = sistema_sqlite.buscar_chamado(1)
+    assert no_banco_ainda_aberto is not None
+    assert no_banco_ainda_aberto.status == StatusChamado.ABERTO
+
+    # Mudança via serviço SistemaChamados persiste no SQLite
+    assert sistema_sqlite.iniciar_atendimento(1) is True
+    assert sistema_sqlite.encerrar_atendimento(1) is True
+
+    recarregado = SistemaChamados(repositorio=RepositorioSQLite(caminho_db)).buscar_chamado(1)
+    assert recarregado is not None
+    assert recarregado.status == StatusChamado.ENCERRADO
+    assert recarregado.iniciado_em is not None
+    assert recarregado.encerrado_em is not None
+
+
+def test_main_integra_sqlite_e_persiste_mudanca_via_servico(
+    caminho_db: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    respostas = iter(["1", ""])
+    monkeypatch.setattr("builtins.input", lambda _: next(respostas))
+
+    main(caminho_banco=caminho_db)
+
+    saida = capsys.readouterr().out
+    assert "Chamado encontrado!" in saida
+    assert "Atendimento iniciado com sucesso!" in saida
+    assert "Novo status: EM_ANDAMENTO" in saida
+
+    # Verifica no banco SQLite que a transição realizada pelo main.py foi persistida
+    sistema_verificacao = SistemaChamados(repositorio=RepositorioSQLite(caminho_db))
+    chamado_persistido = sistema_verificacao.buscar_chamado(1)
+    assert chamado_persistido is not None
+    assert chamado_persistido.status == StatusChamado.EM_ANDAMENTO
+    assert chamado_persistido.iniciado_em is not None
 
 
 # =========================================================
@@ -214,6 +295,28 @@ def test_impedir_transicoes_invalidas_no_sqlite(sistema_sqlite: SistemaChamados)
     assert sistema_sqlite.atualizar_status(chamado.id, StatusChamado.ABERTO) is False
 
 
+def test_impedir_contorno_de_transicao_direto_no_repositorio_sqlite(
+    caminho_db: Path,
+) -> None:
+    repositorio = RepositorioSQLite(caminho_db)
+    chamado = repositorio.salvar(Chamado(None, "Falha de DNS", "Servidor interno não resolve"))
+    assert chamado.id == 1
+
+    # Tenta forçar atualização direta de ABERTO -> ENCERRADO no repositório
+    chamado_invalido = Chamado(
+        id=1,
+        titulo="Falha de DNS",
+        descricao="Servidor interno não resolve",
+        status=StatusChamado.ENCERRADO,
+    )
+    with pytest.raises(ValueError, match="Transição de status inválida"):
+        repositorio.atualizar(chamado_invalido)
+
+    persistido = repositorio.buscar_por_id(1)
+    assert persistido is not None
+    assert persistido.status == StatusChamado.ABERTO
+
+
 def test_erro_ao_iniciar_ou_encerrar_chamado_inexistente(sistema_sqlite: SistemaChamados) -> None:
     with pytest.raises(ValueError, match="Chamado com ID 404 não encontrado"):
         sistema_sqlite.iniciar_atendimento(404)
@@ -232,4 +335,3 @@ def test_impedir_id_duplicado_no_sqlite(sistema_sqlite: SistemaChamados) -> None
         sistema_sqlite.cadastrar_chamado(chamado_duplicado)
 
     assert len(sistema_sqlite.listar_chamados()) == 1
-

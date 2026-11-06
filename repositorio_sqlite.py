@@ -46,6 +46,7 @@ class RepositorioSQLite:
         )
 
     def salvar(self, chamado: Chamado) -> Chamado:
+        id_gerado: int | None = None
         try:
             with closing(self._conectar()) as conexao:
                 with conexao:
@@ -67,7 +68,7 @@ class RepositorioSQLite:
                         )
                         if cursor.lastrowid is None:
                             raise RuntimeError("Falha ao obter o ID gerado pelo SQLite.")
-                        chamado.atribuir_id(int(cursor.lastrowid))
+                        id_gerado = int(cursor.lastrowid)
                     else:
                         conexao.execute(
                             """
@@ -85,11 +86,15 @@ class RepositorioSQLite:
                                 chamado.encerrado_em,
                             ),
                         )
-            return chamado
         except sqlite3.IntegrityError as erro:
             raise ValueError(
                 f"Já existe um chamado cadastrado com o ID {chamado.id}."
             ) from erro
+
+        if id_gerado is not None:
+            chamado.atribuir_id(id_gerado)
+
+        return chamado
 
     def buscar_por_id(self, id_chamado: int) -> Chamado | None:
         with closing(self._conectar()) as conexao:
@@ -124,7 +129,22 @@ class RepositorioSQLite:
 
         with closing(self._conectar()) as conexao:
             with conexao:
-                cursor = conexao.execute(
+                linha_atual = conexao.execute(
+                    "SELECT status FROM chamados WHERE id = ?",
+                    (chamado.id,),
+                ).fetchone()
+                if linha_atual is None:
+                    raise ValueError(f"Chamado com ID {chamado.id} não encontrado para atualização.")
+
+                status_atual = StatusChamado(str(linha_atual["status"]))
+                if status_atual != chamado.status and not Chamado.transicao_permitida(
+                    status_atual, chamado.status
+                ):
+                    raise ValueError(
+                        f"Transição de status inválida de {status_atual} para {chamado.status}."
+                    )
+
+                conexao.execute(
                     """
                     UPDATE chamados
                     SET titulo = ?,
@@ -143,7 +163,4 @@ class RepositorioSQLite:
                         chamado.id,
                     ),
                 )
-                if cursor.rowcount == 0:
-                    raise ValueError(f"Chamado com ID {chamado.id} não encontrado para atualização.")
         return chamado
-
